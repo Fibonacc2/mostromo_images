@@ -1,42 +1,41 @@
-// apps/mostromo_images/lib/app_router.dart
-
+// lib/app_router.dart
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart'; // MethodChannel için
+import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 
-// Paketlerden gelen importlar
 import 'package:shared_core/models/media_item.dart';
 import 'package:common_ui/views/widgets/navbar_widget.dart';
 
-// Sayfalar
 import 'package:mostromo_images/views/features/gallery/images_page.dart';
 import 'package:mostromo_images/views/features/gallery/view_image.dart';
 import 'package:mostromo_images/views/features/gallery/upload_page.dart';
 import 'package:mostromo_images/views/features/search/search_page.dart';
 import 'package:mostromo_images/views/features/search/settings_page.dart';
 
-class AppRouter {
-  // Router nesnesi
-  late final GoRouter router;
+import 'package:mostromo_images/views/features/auth/login_page.dart'; // 🌟 YENİ
+import 'package:mostromo_images/auth_view_model.dart'; // 🌟 YENİ
 
-  // ✅ NATIVE KANAL: Android ile konuşmak için
+class AppRouter {
+  late final GoRouter router;
   static const MethodChannel _platform = MethodChannel('mostromo_images/share');
 
-  AppRouter() {
+  final AuthViewModel authViewModel; // 🌟 YENİ
+
+  AppRouter(this.authViewModel) {
     router = GoRouter(
       initialLocation: '/',
-
-      // ✅ 1. YÖNLENDİRME MANTIĞI (Açılışta Paylaşım Var mı?)
+      refreshListenable:
+          authViewModel, // 🌟 YENİ: Kullanıcı giriş/çıkış yaptığında rotaları tekrar tetikler
       redirect: _handleRedirect,
-
       routes: [
-        // --- 1. GRUP: TAB BAR GÖRÜNEN SAYFALAR ---
+        // 🌟 YENİ: Login Rotası
+        GoRoute(path: '/login', builder: (context, state) => const LoginPage()),
+
         StatefulShellRoute.indexedStack(
           builder: (context, state, navigationShell) {
             return MainNavigationWrapper(navigationShell: navigationShell);
           },
           branches: [
-            // 1. Sekme: Galeri
             StatefulShellBranch(
               routes: [
                 GoRoute(
@@ -45,7 +44,6 @@ class AppRouter {
                 ),
               ],
             ),
-            // 2. Sekme: Arama
             StatefulShellBranch(
               routes: [
                 GoRoute(
@@ -57,12 +55,10 @@ class AppRouter {
           ],
         ),
 
-        // --- 2. GRUP: TAM EKRAN SAYFALAR ---
         GoRoute(
           path: '/upload',
           builder: (context, state) => const UploadPage(),
         ),
-
         GoRoute(
           path: '/view_image',
           builder: (context, state) {
@@ -81,7 +77,6 @@ class AppRouter {
             );
           },
         ),
-
         GoRoute(
           path: '/settings',
           builder: (context, state) => const SettingsPage(),
@@ -89,31 +84,35 @@ class AppRouter {
       ],
     );
 
-    // ✅ 2. DİNLEYİCİYİ BAŞLAT (Uygulama çalışırken paylaşım gelirse)
     _setupPlatformChannel();
   }
 
-  // --- YARDIMCI FONKSİYONLAR ---
-
-  // Uygulama açılırken çalışır
   Future<String?> _handleRedirect(
     BuildContext context,
     GoRouterState state,
   ) async {
-    // Zaten upload sayfasındaysak tekrar kontrol etme
+    final bool isLoggedIn = authViewModel.isLoggedIn;
+    final bool isLoginRoute = state.uri.path == '/login';
+
+    // 🌟 YENİ: KULLANICI GİRİŞ YAPMADIYSA ZORLA LOGİN SAYFASINA AT
+    if (!isLoggedIn) {
+      return isLoginRoute ? null : '/login';
+    }
+
+    // 🌟 YENİ: GİRİŞ YAPMIŞ KULLANICI LOGİN SAYFASINA GİDEMEZ
+    if (isLoginRoute) {
+      return '/';
+    }
+
     if (state.uri.path == '/upload') return null;
 
-    // Native tarafa sor: "Paylaşılmış bir dosya var mı?"
     final hasShare = await _checkPendingShare();
-
     if (hasShare) {
-      // Varsa direkt upload sayfasına yönlendir
       return '/upload';
     }
-    return null; // Yoksa normal akışa devam et
+    return null;
   }
 
-  // Native tarafa (Kotlin/Java) sorar
   Future<bool> _checkPendingShare() async {
     try {
       final bool? hasShare = await _platform.invokeMethod('hasPendingShare');
@@ -123,11 +122,9 @@ class AppRouter {
     }
   }
 
-  // Native taraftan gelen sinyalleri dinler (App arkadayken paylaşım gelirse)
   void _setupPlatformChannel() {
     _platform.setMethodCallHandler((call) async {
-      if (call.method == "navigateToUpload") {
-        // Native kod "Hadi Upload sayfasına git" dediğinde:
+      if (call.method == "navigateToUpload" && authViewModel.isLoggedIn) {
         router.go('/upload');
       }
       return null;
@@ -135,10 +132,8 @@ class AppRouter {
   }
 }
 
-// --- NAVBAR WRAPPER (Değişmedi) ---
 class MainNavigationWrapper extends StatelessWidget {
   final StatefulNavigationShell navigationShell;
-
   const MainNavigationWrapper({super.key, required this.navigationShell});
 
   @override

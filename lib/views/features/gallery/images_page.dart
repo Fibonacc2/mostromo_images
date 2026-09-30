@@ -1,11 +1,11 @@
-// apps/mostromo_images/lib/features/gallery/images_page.dart
+// lib/views/features/gallery/images_page.dart
 
-import 'package:common_ui/views/widgets/scaffold.dart';
 import 'package:flutter/material.dart';
-import 'package:cached_network_image/cached_network_image.dart';
+import 'package:cached_network_image/cached_network_image.dart'; // 🌟 YENİDEN EKLENDİ
 import 'package:go_router/go_router.dart';
+import 'package:mostromo_images/auth_view_model.dart';
+import 'package:provider/provider.dart';
 import 'package:shared_core/data/notifiers.dart';
-import 'package:common_ui/common_ui.dart'; // Ortak UI paketi
 import 'package:shared_core/services/api_service.dart';
 import 'package:shared_core/models/media_group.dart';
 import 'package:shared_core/models/media_item.dart';
@@ -19,12 +19,30 @@ class ImagesPage extends StatefulWidget {
 
 class _ImagesPageState extends State<ImagesPage> {
   bool _initialLoadDone = false;
-  bool _isLoading = false;
+
+  // Sayfalama (Pagination) Kontrolleri
+  final ScrollController _scrollController = ScrollController();
+  int _currentPage = 1;
+  bool _hasMoreData = true;
 
   @override
   void initState() {
     super.initState();
     _initializeData();
+
+    // Liste sonuna gelindiğini dinleyen sistem
+    _scrollController.addListener(() {
+      if (_scrollController.position.pixels >=
+          _scrollController.position.maxScrollExtent - 200) {
+        _loadMoreData();
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
   }
 
   void _initializeData() {
@@ -33,14 +51,20 @@ class _ImagesPageState extends State<ImagesPage> {
     });
   }
 
-  /// Uygulama ilk açıldığında verileri yükler
   void _loadInitialData() async {
-    if (_isLoading || _initialLoadDone) return;
+    if (_initialLoadDone || isLoadingMediaNotifier.value) return;
 
-    _isLoading = true;
     try {
       if (cachedMediaGroupsNotifier.value == null) {
-        await ApiService.fetchAndCacheGroupedMedia();
+        _currentPage = 1;
+        _hasMoreData = true;
+        final userId = context.read<AuthViewModel>().userId ?? 0;
+        await ApiService.fetchAndCacheGroupedMedia(
+          userId: userId,
+          page: _currentPage,
+          loadMore: false,
+        );
+
         if (mounted) {
           setState(() {
             _initialLoadDone = true;
@@ -49,25 +73,52 @@ class _ImagesPageState extends State<ImagesPage> {
       }
     } catch (error) {
       debugPrint('Initial data loading error: $error');
-    } finally {
-      if (mounted) {
-        setState(() {
-          _isLoading = false;
-        });
-      }
     }
   }
 
-  /// Aşağı çekince tetiklenen yenileme fonksiyonu
+  Future<void> _loadMoreData() async {
+    if (isLoadingMediaNotifier.value || !_hasMoreData) return;
+
+    _currentPage++;
+    try {
+      final beforeCount = _getMediaCount();
+      final userId = context.read<AuthViewModel>().userId ?? 0;
+      await ApiService.fetchAndCacheGroupedMedia(
+        userId: userId,
+        page: _currentPage,
+        loadMore: true,
+      );
+      final afterCount = _getMediaCount();
+
+      if (beforeCount == afterCount && mounted) {
+        setState(() => _hasMoreData = false);
+      }
+    } catch (error) {
+      debugPrint('Load more error: $error');
+      _currentPage--;
+    }
+  }
+
+  int _getMediaCount() {
+    if (cachedMediaGroupsNotifier.value == null) return 0;
+    return cachedMediaGroupsNotifier.value!.expand((g) => g.items).length;
+  }
+
   Future<void> _handleRefresh() async {
     try {
-      await ApiService.fetchAndCacheGroupedMedia();
+      _currentPage = 1;
+      _hasMoreData = true;
+      final userId = context.read<AuthViewModel>().userId ?? 0;
+      await ApiService.fetchAndCacheGroupedMedia(
+        userId: userId,
+        page: _currentPage,
+        loadMore: false,
+      );
     } catch (error) {
       debugPrint('Refresh error: $error');
     }
   }
 
-  /// Detay sayfasına yönlendirme
   void _openImageDetail(List<MediaItem> allItems, int index) {
     selectedImageNotifier.value = allItems[index];
 
@@ -77,20 +128,24 @@ class _ImagesPageState extends State<ImagesPage> {
     );
   }
 
-  /// Yükleme sayfasına yönlendirme
   void _openUploadPage() {
     context.push('/upload');
   }
 
   @override
   Widget build(BuildContext context) {
-    return MostromoScaffold(
-      onRefresh: _handleRefresh, // Yenileme desteği
+    return Scaffold(
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       floatingActionButton: FloatingActionButton(
         onPressed: _openUploadPage,
         child: const Icon(Icons.add_rounded, color: Colors.white, size: 28),
       ),
-      body: _buildContent(),
+      body: SafeArea(
+        child: RefreshIndicator(
+          onRefresh: _handleRefresh,
+          child: _buildContent(),
+        ),
+      ),
     );
   }
 
@@ -98,78 +153,75 @@ class _ImagesPageState extends State<ImagesPage> {
     return ValueListenableBuilder<List<MediaGroup>?>(
       valueListenable: cachedMediaGroupsNotifier,
       builder: (context, groups, child) {
-        if (groups == null) {
-          return const Center(
-            child: Padding(
-              padding: EdgeInsets.only(top: 100),
-              child: CircularProgressIndicator(),
-            ),
+        if (groups == null && isLoadingMediaNotifier.value) {
+          return const Center(child: CircularProgressIndicator());
+        }
+
+        if (groups == null || groups.isEmpty) {
+          return const CustomScrollView(
+            physics: AlwaysScrollableScrollPhysics(),
+            slivers: [
+              SliverFillRemaining(
+                child: Center(child: Text("Hiç medya bulunamadı")),
+              ),
+            ],
           );
         }
 
-        if (groups.isEmpty) {
-          return const Center(
-            child: Padding(
-              padding: EdgeInsets.only(top: 100),
-              child: Text("Hiç medya bulunamadı"),
-            ),
-          );
-        }
-
-        // Tüm gruplardaki medyaları tek bir listede topla (Detay sayfasında kaydırmak için)
         final List<MediaItem> allItems = groups
             .expand((group) => group.items)
             .toList();
-
         int itemOffset = 0;
 
-        return Column(
-          children: groups.map((group) {
-            final currentOffset = itemOffset;
-            itemOffset += group.items.length;
-            return _buildMediaGroup(group, allItems, currentOffset);
-          }).toList(),
+        return CustomScrollView(
+          controller: _scrollController,
+          physics: const AlwaysScrollableScrollPhysics(),
+          slivers: [
+            ...groups.expand((group) {
+              final currentOffset = itemOffset;
+              itemOffset += group.items.length;
+
+              return [
+                SliverToBoxAdapter(
+                  key: PageStorageKey<String>('header_${group.date}'),
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(12, 32, 12, 8),
+                    child: Text(
+                      group.date,
+                      style: const TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                ),
+                SliverGrid(
+                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: 4,
+                    crossAxisSpacing: 4,
+                    mainAxisSpacing: 4,
+                  ),
+                  delegate: SliverChildBuilderDelegate((context, index) {
+                    final item = group.items[index];
+                    final globalIndex = currentOffset + index;
+                    return _buildMediaItem(item, allItems, globalIndex);
+                  }, childCount: group.items.length),
+                ),
+              ];
+            }),
+
+            if (_hasMoreData)
+              const SliverToBoxAdapter(
+                child: Padding(
+                  padding: EdgeInsets.all(24.0),
+                  child: Center(child: CircularProgressIndicator()),
+                ),
+              )
+            else
+              const SliverToBoxAdapter(child: SizedBox(height: 80)),
+          ],
         );
       },
-    );
-  }
-
-  Widget _buildMediaGroup(
-    MediaGroup group,
-    List<MediaItem> allItems,
-    int itemOffset,
-  ) {
-    return Column(
-      key: PageStorageKey<String>(group.date),
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        // Tarih Başlığı
-        Padding(
-          padding: const EdgeInsets.fromLTRB(12, 32, 12, 8),
-          child: Text(
-            group.date,
-            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-          ),
-        ),
-        // Medya Izgarası
-        GridView.builder(
-          shrinkWrap: true,
-          physics:
-              const NeverScrollableScrollPhysics(), // Scroll kontrolü MostromoScaffold'da
-          itemCount: group.items.length,
-          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-            crossAxisCount: 4,
-            crossAxisSpacing: 4,
-            mainAxisSpacing: 4,
-          ),
-          itemBuilder: (context, index) {
-            final item = group.items[index];
-            final globalIndex = itemOffset + index;
-            return _buildMediaItem(item, allItems, globalIndex);
-          },
-        ),
-        const SizedBox(height: 12),
-      ],
     );
   }
 
@@ -178,10 +230,11 @@ class _ImagesPageState extends State<ImagesPage> {
     List<MediaItem> allItems,
     int globalIndex,
   ) {
-    // RESİM ÖĞESİ
     if (item.fileType == "media/img") {
-      final String? imageUrl =
+      final String? rawUrl =
           item.imageWebpMini ?? item.imageWebp ?? item.imageURL;
+      // 🌟 YENİ: URL Şifreleme eklendi
+      final String? imageUrl = rawUrl != null ? Uri.encodeFull(rawUrl) : null;
 
       return Padding(
         padding: const EdgeInsets.all(2.0),
@@ -189,6 +242,7 @@ class _ImagesPageState extends State<ImagesPage> {
           borderRadius: BorderRadius.circular(8),
           child: GestureDetector(
             onTap: () => _openImageDetail(allItems, globalIndex),
+            // 🌟 ORİJİNAL KODUNA DÖNÜLDÜ: RAM tüketimini "memCacheWidth" ile kontrol altında tutuyoruz
             child: (imageUrl == null || imageUrl.isEmpty)
                 ? const _PlaceholderWidget()
                 : CachedNetworkImage(
@@ -202,9 +256,11 @@ class _ImagesPageState extends State<ImagesPage> {
           ),
         ),
       );
-    }
-    // VİDEO ÖĞESİ
-    else if (item.fileType == "media/vid") {
+    } else if (item.fileType == "media/vid") {
+      final String? posterUrl = item.videoPoster != null
+          ? Uri.encodeFull(item.videoPoster!)
+          : null;
+
       return Padding(
         padding: const EdgeInsets.all(2.0),
         child: GestureDetector(
@@ -214,9 +270,9 @@ class _ImagesPageState extends State<ImagesPage> {
             children: [
               ClipRRect(
                 borderRadius: BorderRadius.circular(8),
-                child: item.videoPoster != null && item.videoPoster!.isNotEmpty
+                child: posterUrl != null && posterUrl.isNotEmpty
                     ? CachedNetworkImage(
-                        imageUrl: item.videoPoster!,
+                        imageUrl: posterUrl,
                         fit: BoxFit.cover,
                         memCacheWidth: 300,
                         placeholder: (context, url) =>

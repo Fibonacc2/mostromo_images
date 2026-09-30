@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:mostromo_images/auth_view_model.dart';
 import 'package:provider/provider.dart';
 import 'package:video_thumbnail/video_thumbnail.dart';
 // import 'package:go_router/go_router.dart'; // Artık pop yapmayacağımız için buna gerek kalmayabilir ama kalsın
@@ -18,11 +19,15 @@ class UploadPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final userId = context.read<AuthViewModel>().userId ?? 0;
     return ChangeNotifierProvider(
       // Galeri için özel URL
       create: (_) => UploadController(
         uploadUrl: "https://mostromo.com/connect/myImages/upload.php",
-        additionalFields: {"uploadLocation": "gallery"},
+        additionalFields: {
+          "uploadLocation": "gallery",
+          "userID": userId.toString(),
+        },
       ),
       child: const _UploadPageView(),
     );

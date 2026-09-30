@@ -1,5 +1,5 @@
 name: mostromo_images
-description: "A new Flutter project."
+description: "Mostromo Images"
 publish_to: "none"
 version: 1.0.0+1
 
@@ -25,6 +25,8 @@ dependencies:
   video_thumbnail:
   provider: ^6.1.1
   file_picker: ^8.0.0 # Controller'ın veri türlerini tanımak için
+  window_manager: ^0.5.2
+  flutter_launcher_icons:
 
 dev_dependencies:
   flutter_test:
@@ -34,3 +36,8 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+
+flutter_launcher_icons:
+  image_path: "assets/app_icon.png" # İkon tasarımın buradaysa
+  android: "launcher_icon"
+  ios: true
