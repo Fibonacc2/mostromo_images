@@ -184,7 +184,13 @@ class _ImagesPageState extends State<ImagesPage> {
           controller: _scrollController,
           physics: const AlwaysScrollableScrollPhysics(),
           slivers: [
-            SliverToBoxAdapter(child: _buildHeader(allItems.length)),
+            SliverToBoxAdapter(
+              child: ValueListenableBuilder<int?>(
+                valueListenable: totalMediaCountNotifier,
+                builder: (context, totalCount, child) =>
+                    _buildHeader(totalCount ?? allItems.length),
+              ),
+            ),
             SliverToBoxAdapter(child: _buildFilterBar(sourceGroups)),
             if (allItems.isEmpty)
               SliverFillRemaining(
